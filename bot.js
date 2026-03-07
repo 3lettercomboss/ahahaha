@@ -1,7 +1,11 @@
 // ============================================================
 //  Discord → Roblox Global Announcement Bot
 //  
-//  /announce  →  opens a modal  →  stores the message
+//  /announce message:"your text here"  →  queues it
+//  Bot looks up the sender's Discord ID in a table to find
+//  their Roblox user ID, which is sent in the payload so the
+//  game can fetch display name, headshot, and role tags.
+//
 //  Roblox servers poll GET /announcements to pick up new ones
 // ============================================================
 
@@ -9,10 +13,6 @@ const {
   Client,
   GatewayIntentBits,
   SlashCommandBuilder,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  ActionRowBuilder,
   PermissionFlagsBits,
   EmbedBuilder,
   REST,
@@ -25,18 +25,35 @@ require("dotenv").config();
 // ── Config ───────────────────────────────────────────────────
 const DISCORD_TOKEN   = process.env.DISCORD_TOKEN;
 const CLIENT_ID       = process.env.CLIENT_ID;
-const GUILD_ID        = process.env.GUILD_ID;        // optional – remove for global
+const GUILD_ID        = process.env.GUILD_ID;
 const API_PORT        = process.env.API_PORT || 3000;
-const API_SECRET      = process.env.API_SECRET || ""; // shared secret with Roblox
-const ANNOUNCE_ROLE   = process.env.ANNOUNCE_ROLE_ID; // optional role restriction
+const API_SECRET      = process.env.API_SECRET || "";
+const ANNOUNCE_ROLE   = process.env.ANNOUNCE_ROLE_ID;
+
+// ══════════════════════════════════════════════════════════════
+//  DISCORD → ROBLOX ID LOOKUP TABLE
+//
+//  Add entries here:  "DISCORD_USER_ID": ROBLOX_USER_ID
+//
+//  To find a Discord ID:  Enable Developer Mode in Discord
+//    Settings → App Settings → Advanced → Developer Mode
+//    Then right-click a user → Copy User ID
+//
+//  To find a Roblox ID:  Go to the player's Roblox profile,
+//    the number in the URL is their ID
+//    e.g. https://www.roblox.com/users/123456789/profile
+// ══════════════════════════════════════════════════════════════
+const DISCORD_TO_ROBLOX = {
+  "1248555481887412315": 7901351400,   // Example — replace with real IDs
+  "1471748884358369423": 26788128,
+  "1353790383129231441": 7237358482,    // Add as many as you need
+  // "DISCORD_ID": ROBLOX_ID,
+};
 
 // ── In-memory announcement queue ─────────────────────────────
-// Roblox servers poll this; once fetched the announcement is
-// kept for EXPIRY_MS so late-joining servers still see it.
 const EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 
 let announcements = [];
-// Each entry: { id, message, author, timestamp }
 
 function pruneOld() {
   const cutoff = Date.now() - EXPIRY_MS;
@@ -46,13 +63,19 @@ function pruneOld() {
 // ── Discord client ───────────────────────────────────────────
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// Register the slash command on startup
 client.once("ready", async () => {
   console.log(`✅  Logged in as ${client.user.tag}`);
 
   const command = new SlashCommandBuilder()
     .setName("announce")
     .setDescription("Send a global announcement to all Roblox servers")
+    .addStringOption((option) =>
+      option
+        .setName("message")
+        .setDescription("The announcement message to send")
+        .setRequired(true)
+        .setMaxLength(2000)
+    )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
   const rest = new REST().setToken(DISCORD_TOKEN);
@@ -76,95 +99,87 @@ client.once("ready", async () => {
 
 // ── Handle /announce interaction ─────────────────────────────
 client.on("interactionCreate", async (interaction) => {
-  // ---- Slash command → show modal ----
-  if (interaction.isChatInputCommand() && interaction.commandName === "announce") {
-    // Optional: restrict to a specific role
-    if (ANNOUNCE_ROLE && !interaction.member.roles.cache.has(ANNOUNCE_ROLE)) {
-      return interaction.reply({
-        content: "❌ You don't have the required role to send announcements.",
-        ephemeral: true,
-      });
-    }
+  if (!interaction.isChatInputCommand() || interaction.commandName !== "announce") return;
 
-    const modal = new ModalBuilder()
-      .setCustomId("announce_modal")
-      .setTitle("📢 Global Announcement");
-
-    const titleInput = new TextInputBuilder()
-      .setCustomId("announce_title")
-      .setLabel("Title (optional)")
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder("e.g. Server Update")
-      .setRequired(false)
-      .setMaxLength(100);
-
-    const messageInput = new TextInputBuilder()
-      .setCustomId("announce_message")
-      .setLabel("Message")
-      .setStyle(TextInputStyle.Paragraph)
-      .setPlaceholder("Type your announcement here…")
-      .setRequired(true)
-      .setMaxLength(2000);
-
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(titleInput),
-      new ActionRowBuilder().addComponents(messageInput)
-    );
-
-    return interaction.showModal(modal);
+  // Optional: restrict to a specific role
+  if (ANNOUNCE_ROLE && !interaction.member.roles.cache.has(ANNOUNCE_ROLE)) {
+    return interaction.reply({
+      content: "❌ You don't have the required role to send announcements.",
+      ephemeral: true,
+    });
   }
 
-  // ---- Modal submit ----
-  if (interaction.isModalSubmit() && interaction.customId === "announce_modal") {
-    const title   = interaction.fields.getTextInputValue("announce_title") || "";
-    const message = interaction.fields.getTextInputValue("announce_message");
+  // Look up the sender's Roblox ID
+  const discordId = interaction.user.id;
+  const robloxId = DISCORD_TO_ROBLOX[discordId] || null;
 
-    const entry = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      title,
-      message,
-      author: interaction.user.tag,
-      timestamp: Date.now(),
-    };
-
-    announcements.push(entry);
-    console.log(`📢  New announcement from ${entry.author}: ${message.slice(0, 60)}…`);
-
-    // Confirmation embed in Discord
-    const embed = new EmbedBuilder()
-      .setTitle("✅ Announcement Queued")
-      .setColor(0x00b0f4)
-      .addFields(
-        { name: "Title",   value: title || "(none)", inline: true },
-        { name: "Author",  value: entry.author,      inline: true },
-        { name: "Message", value: message.slice(0, 1024) }
-      )
-      .setFooter({ text: `ID: ${entry.id} • Expires in 5 min` })
-      .setTimestamp();
-
-    return interaction.reply({ embeds: [embed] });
+  if (!robloxId) {
+    return interaction.reply({
+      content: "❌ Your Discord account is not linked to a Roblox ID. Ask an admin to add your ID to the bot.",
+      ephemeral: true,
+    });
   }
+
+  const message = interaction.options.getString("message");
+
+  const entry = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    message,
+    discordId,
+    discordTag: interaction.user.tag,
+    robloxId,
+    timestamp: Date.now(),
+  };
+
+  announcements.push(entry);
+  console.log(`📢  Announcement from ${entry.discordTag} (Roblox ${robloxId}): ${message.slice(0, 60)}…`);
+
+  const embed = new EmbedBuilder()
+    .setTitle("📢 Announcement Sent")
+    .setColor(0x00b0f4)
+    .addFields(
+      { name: "Author",    value: entry.discordTag,     inline: true },
+      { name: "Roblox ID", value: String(robloxId),     inline: true },
+      { name: "Message",   value: message.slice(0, 1024) }
+    )
+    .setFooter({ text: `ID: ${entry.id} • Expires in 5 min` })
+    .setTimestamp();
+
+  return interaction.reply({ embeds: [embed] });
 });
 
 // ── HTTP API for Roblox servers ──────────────────────────────
 //
-//  GET  /announcements?secret=YOUR_SECRET&after=TIMESTAMP
-//       → returns announcements newer than `after` (default 0)
+//  GET /announcements?secret=XXX&after=TIMESTAMP
 //
-//  The Roblox script polls this every few seconds.
+//  Response:
+//  {
+//    "announcements": [
+//      {
+//        "id": "...",
+//        "message": "Double XP!",
+//        "discordId": "123456789012345678",
+//        "discordTag": "Admin#0001",
+//        "robloxId": 123456789,        ← use this in-game
+//        "timestamp": 1709856000000
+//      }
+//    ]
+//  }
+//
+//  In your Roblox game, use robloxId to:
+//    - Get display name via Players:GetNameFromUserIdAsync(robloxId)
+//    - Get headshot via Players:GetUserThumbnailAsync(robloxId, ...)
+//    - Check your own role table for [OWNER] tag etc.
 // ─────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${API_PORT}`);
 
-  // ---- Health check ----
   if (url.pathname === "/" || url.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ status: "ok", queued: announcements.length }));
   }
 
-  // ---- Announcements endpoint ----
   if (url.pathname === "/announcements" && req.method === "GET") {
-    // Validate shared secret
     if (API_SECRET && url.searchParams.get("secret") !== API_SECRET) {
       res.writeHead(403, { "Content-Type": "application/json" });
       return res.end(JSON.stringify({ error: "invalid secret" }));
@@ -187,5 +202,4 @@ server.listen(API_PORT, () => {
   console.log(`🌐  HTTP API listening on port ${API_PORT}`);
 });
 
-// ── Start ────────────────────────────────────────────────────
 client.login(DISCORD_TOKEN);
