@@ -1,0 +1,14 @@
+{
+  "name": "discord-roblox-announce-bot",
+  "version": "1.0.0",
+  "description": "Discord bot with /announce command that pushes global messages to Roblox servers",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "node --watch bot.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5"
+  }
+}
