@@ -44,9 +44,8 @@ const ANNOUNCE_ROLE   = process.env.ANNOUNCE_ROLE_ID;
 //    e.g. https://www.roblox.com/users/123456789/profile
 // ══════════════════════════════════════════════════════════════
 const DISCORD_TO_ROBLOX = {
-  "1248555481887412315": 7901351400,   // Example — replace with real IDs
-  "1471748884358369423": 26788128,
-  "1353790383129231441": 7237358482,    // Add as many as you need
+  "123456789012345678": 123456789,   // Example — replace with real IDs
+  "987654321098765432": 987654321,   // Add as many as you need
   // "DISCORD_ID": ROBLOX_ID,
 };
 
