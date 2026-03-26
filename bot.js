@@ -46,7 +46,7 @@ const ANNOUNCE_ROLE   = process.env.ANNOUNCE_ROLE_ID;
 const DISCORD_TO_ROBLOX = {
   "1248555481887412315": 7901351400,   // Example — replace with real IDs
   "1471748884358369423": 26788128,
-  "1353790383129231441": 7237358482,    // Add as many as you need
+  "619662818601467936": 7237358482,    // Add as many as you need
   // "DISCORD_ID": ROBLOX_ID,
 };
 
